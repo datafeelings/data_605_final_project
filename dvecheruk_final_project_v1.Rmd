@@ -14,6 +14,9 @@ output:
 
 ```{r knitr_init, echo=FALSE, cache=FALSE}
 library(knitr)
+library(MASS)
+library(dplyr)
+library(ggplot2)
 
 ## Global options
 options(max.print="75")
@@ -54,8 +57,8 @@ First off, we are required to read the training data and pick a quantitative var
 library(dplyr)
 library(readr)
 
-inp = read_csv("data/train.csv")
-str(data.frame(inp))
+inp = read.csv("data/train.csv")
+str(inp)
 ```
   
 This training dataset at hand is a subset of rows from the full Ames Housing Dataset.  
@@ -65,7 +68,12 @@ It contains `r nrow(inp)` rows and `r ncol(inp)` columns, many of which are cate
 We'll first inspect the filling rates and distributions of each of the variables and then pick one to proceed with the assignment.
 
 ```{r}
-inp1 = inp %>% select(LotArea,GrLivArea,SalePrice)
+
+# Exclude the Id variable from all further analysis
+inp = inp[,2:ncol(inp)]
+
+inp = as.tbl(inp)
+inp1 = inp %>% dplyr::select(LotArea,GrLivArea,SalePrice)
 summary(inp1)
 ```
 
@@ -83,7 +91,7 @@ From the plots we see that `GrLivArea` and `SalePrice` are approximately normal 
 So we will use `GrLivArea` as the independent variable (X), and `SalePrice` as the dependent variable(Y) in the subsequent analysis.
   
 ```{r}
-dataset = inp1 %>% select(X = GrLivArea, Y = SalePrice)
+dataset = inp1 %>% dplyr::select(X = GrLivArea, Y = SalePrice)
 kable(head(dataset))
 ```
 
@@ -109,7 +117,7 @@ dataset = dataset %>%
   mutate(X_over_P75 = X > quantile(X,0.75),
          Y_over_P25 = Y > quantile(Y, 0.25))
 
-table(select(dataset,X_over_P75, Y_over_P25))
+table(dplyr::select(dataset,X_over_P75, Y_over_P25))
 
 print (paste("Total number of rows:",nrow(dataset)))
 ```
@@ -185,7 +193,7 @@ single_qqplot = function(tbl, var_name) {
   
 
 ```{r}
-dataset = select(dataset, X,Y)
+dataset = dplyr::select(dataset, X,Y)
 desc_stat(dataset, 'X')
 
 single_qqplot(dataset, 'X')
@@ -313,7 +321,7 @@ max(dataset$X)>0
 Now we can proceed to finding a fitting density function to the sample distribution so that we can generate multiple samples using the PDF. As the values in our sample are only positive, it might be reasonable to fit a Gamma distribution:
 
 ```{r}
-library(MASS)
+
 pdf_fit = fitdistr(dataset$X,densfun = 'gamma')
 
 print (pdf_fit)
@@ -344,6 +352,210 @@ We observe a fairly close match in the distribution of a 1000 samples from the o
 
 Assignment: *Build some type of regression model and submit your model to the competition board. Provide your complete model summary and results with analysis.*  
 
+As the original dataset includes a large number of predictor variables (80), overfitting is a concern when building the model with the full set of variables. On the other hand, stepwise model selection approaches would be inefficient given the large number of combinations of the possible predictors.  
+Therefore we'll apply a regularized regression approach that automatically takes care of the variable selection by setting predictor coefficients to zero if this helps to reduce the overall error (LASSO regression from the `glmnet` library) [6].   
+The optimal penalty parameter $\lambda$ will be identified using k-fold cross-validation, then the model will be trained using the defined lambda value [7].  
+
+### 3.5.1 Data preprocessing
+
+First, we need to preprocess the data: remove near-zero variance predictors and generate numeric dummy variables for factor variables [].
+
+```{r train preproc}
+library(caret)
+
+inp_df = read.csv("data/train.csv")
+
+# Upon inspection of the codebook, we make 2 changes:
+#   the MSSubClass should be encoded as a factor
+#   the Id column should be excluded
+
+inp_df$MSSubClass = as.factor(inp_df$MSSubClass)
+inp_df = inp_df[,2:ncol(inp_df)]
+
+
+# We should exclude the variables having very low variance that might lead to observations with an extreme leverage in individual folds
+
+nzv <- nearZeroVar(inp_df, saveMetrics= TRUE)
+
+nonzv_params = nzv[nzv$nzv==FALSE,]
+nonzv_params = row.names(nonzv_params)
+
+cols = match(nonzv_params ,colnames(inp_df)) 
+inp_no_nzv = inp_df[,cols]
+
+
+# Generate a feature matrix with dummy variables and 
+# replace NA values in the feature matrix with zeros
+dummies = dummyVars(SalePrice ~ ., data = inp_no_nzv)
+input_vars = predict(dummies,inp_no_nzv)
+input_vars[is.na(input_vars)] = 0
+
+
+```
+
+```{r lasso-fit}
+set.seed(123)
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           ## repeated ten times
+                           repeats = 5)
+
+# Grid for parameter tuning
+# Fixed alpha at 1 to keep the pure LASSO approach
+tune_grid = expand.grid(.alpha = 1, .lambda = (1:10) * 0.1)
+
+lasso_fit = train(x=input_vars,y=inp_df$SalePrice, 
+                 method = "glmnet",
+                 tuneGrid = tune_grid,
+                 trControl = fitControl)
+lasso_fit
+
+```
+  
+We can see that the best model explains approximately 81.6% of the variance in the response and has an RMSE of 34927.44
+Now we can use the final model to compare its output with the in-sample data first:
+
+```{r}
+# Final model
+lasso_model = lasso_fit$finalModel
+
+fitted = predict(lasso_fit)
+
+qplot(x=fitted, y = inp_df$SalePrice,xlab = "Fitted data", ylab = "True Response",
+      main = "In-Sample comparison: Predicted Sale Price vs. True Response",alpha=0.5)
+```
+  
+Here are the top 10 predictors defined by the variable importance []:
+```{r}
+var_imp = varImp(lasso_model)
+var_imp$parameter = row.names(var_imp)
+var_imp = var_imp[order(var_imp$Overall,decreasing = T),] 
+
+var_imp_top10 = var_imp[1:10,]
+print(var_imp_top10)
+```
+
+Neighborhood seems to be the top influencing factor along with a good/excellent swimming pool, excellent kitchen, and all-stone exterior.
+  
+Now we can apply the model to generate predictions from the test data in order to submit them to the Kaggle competition.
+
+```{r}
+test = read.csv("data/test.csv")
+
+# Add placeholder response column to maintain the structure
+
+test$SalePrice = 0
+
+# Apply the same transformations as on the training set
+
+test$MSSubClass = as.factor(test$MSSubClass)
+test = test[,2:ncol(test)]
+
+test = test[,cols] # retain only the selected columns
+
+
+# Generate a feature matrix with dummy variables and 
+# replace NA values in the feature matrix with zeros
+dummies_test = dummyVars(SalePrice ~ ., data = test)
+input_vars_test = predict(dummies_test,test)
+input_vars_test[is.na(input_vars_test)] = 0
+
+# If some factor levels do not appear in the test set, the prediction will fail
+# Add these levels:
+
+setdiff(names(input_vars_test[1,]),names(input_vars[1,]))
+
+# Predict for the test data
+
+test_pred = predict(lasso_model,s = 1,newx = input_vars_test,type="link")
+```
+
+```{r}
+
+x1 = as.matrix(inp_no_nzv[,-59])
+x1[is.na(x1)] = 0 # replace NA values with zero
+x1 = data.frame(x1)
+x1 = model.matrix( ~ . -1, x1) # generate dummy variables for factor levels
+
+y1 = inp_no_nzv[,59]
+
+cv_lasso = cv.glmnet(x = x1,y = y1,family = "gaussian",alpha = 1,nlambda = 100)
+plot(fitted, y1)
+print(lm1)
+
+```
+
+Here we can see how the lambda correspondent to the lowest cross-validation mean squared error was selected by the model:
+```{r}
+plot(cv_lasso)
+```
+
+We will use the most regularized model (with the least amount of predictors) that is still within 1 SE of the lowest lambda value. We can then see what % of the deviance of the response is explaned by this model:
+
+```{r}
+lambda.1se = cv_lasso$lambda.1se
+models = data.frame(dev_ratio =cv_lasso$glmnet.fit$dev.ratio,
+                    lambda = cv_lasso$glmnet.fit$lambda)
+
+models[models$lambda == lambda.1se,]
+```
+
+The best and simplest model explains 88% of the variance of the response variable.
+We can also visualize this good match against the training data:
+
+```{r}
+# The most regularized model within 1 SE of the minimum lambda
+fitted = predict(cv_lasso,newx = x1,s = "lambda.1se")
+qplot(x=fitted, y = inp_df$SalePrice,xlab = "Fitted data", ylab = "True Response",
+      main = "Predicted Sale Price vs. True Response")
+
+```
+
+Now we can briefly explore the most important predictors
+
+```{r}
+summary(cv_lasso$glmnet.fit)
+```
+
+Finally, generate predictions on the test dataset for submission to the Kaggle competition
+
+```{r}
+test = read.csv("data/test.csv")
+
+# Add placeholder response column to maintain the structure
+
+test$SalePrice = 0
+
+# Apply the same transformations as on the training set
+
+test$MSSubClass = as.factor(test$MSSubClass)
+test = test[,2:ncol(test)]
+
+test = test[,cols] # retain only the selected columns
+test = test[,-59]
+
+# It is crucial to set the factor levels to the same levels as in the training data
+# otherwise the glmnet prediction will fail due to a different dimension of the dummy
+# variable matrix
+
+train = inp_no_nzv[,-59]
+
+for(i in 1:ncol(test)) {
+  if(is.factor(test[,i])) {
+    levels(test[,i]) <- c(levels(train[,i]))
+    }
+}
+
+
+x2 = as.matrix(test[,-59])
+x2[is.na(x2)] = 0 # replace NA values with zero
+x2 = data.frame(x2)
+x2 = model.matrix( ~ . -1, x2) # generate dummy variables for factor levels
+
+fitted_test = predict(cv_lasso,newx = x2,s = "lambda.1se")
+```
 
 
 # Reference
@@ -352,3 +564,9 @@ Assignment: *Build some type of regression model and submit your model to the co
 [3] http://www.r-tutor.com/elementary-statistics/goodness-fit/chi-squared-test-independence  
 [4] https://www.rdocumentation.org/packages/car/versions/2.1-4/topics/boxCox  
 [5] http://www.itl.nist.gov/div898/handbook/eda/section3/eda336.htm  
+[6] http://www-bcf.usc.edu/~gareth/ISL/
+[7] https://www.youtube.com/watch?v=fAPCaue8UKQ  
+[8] https://stats.stackexchange.com/questions/72251/an-example-lasso-regression-using-glmnet-for-binary-outcome 
+[] http://topepo.github.io/caret/pre-processing.html#dummy  
+[] https://topepo.github.io/caret/variable-importance.html#model-independent-metrics
+[] http://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html#qs
