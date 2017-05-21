@@ -1,0 +1,292 @@
+---
+title: "DATA 605: Final Project"
+subtitle: "by Dmitriy Vecheruk"
+date: "20 May 2017"
+output:
+  html_document:
+    theme: cosmo
+    highlight: kate
+    toc: true
+    toc_float: true
+    code_folding: show
+    
+---
+
+```{r knitr_init, echo=FALSE, cache=FALSE}
+library(knitr)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE,
+               fig.height = 4)
+opts_knit$set(width=75)
+```
+
+# 1. Introduction
+
+This document is my submission for the final project assignment of the CUNY MSDA DATA 605 course (Spring 2017).  
+
+The goal of the assignment is to use a subset of variables from the [Kaggle Housing Price dataset](https://www.kaggle.com/c/house-prices-advanced-regression-techniques) and apply various data analysis techniques from the following domains on it:
+  
+1) Probability calculation and independence test  
+2) Descriptive and inferential statistics  
+3) Linear algebra and correlation  
+4) Calculus-based probability and statistics  
+5) Regression modeling
+  
+The details of the assignments are provided below.
+
+**DESCRIBE THE DATASET(copy paste?)**
+
+# 2. Data preparation
+  
+### Dataset inspection and subsetting
+
+First off, we are required to read the training data and pick a quantitative variable that should be the independent variable X, whereas the dependent variable Y is `SalePrice`.
+  
+```{r message=F, warning=F}
+library(dplyr)
+library(readr)
+
+inp = read_csv("data/train.csv")
+str(data.frame(inp))
+```
+  
+This training dataset at hand is a subset of rows from the full Ames Housing Dataset.  
+It contains `r nrow(inp)` rows and `r ncol(inp)` columns, many of which are categorical. After inspecting the codebook[1], the following quantitative columns were selected as potentially interesting independent variables:
+`LotArea` (sq.ft. size of the lot) and `GrLivArea`(sq.ft. size of the living area above ground).
+
+We'll first inspect the filling rates and distributions of each of the variables and then pick one to proceed with the assignment.
+
+```{r}
+inp1 = inp %>% select(LotArea,GrLivArea,SalePrice)
+summary(inp1)
+```
+
+We can see that none of the variables has missing values, so we can proceed to distribution plots[2]:
+
+```{r}
+library(ggplot2)
+
+inp1long <- reshape2::melt(inp1)
+ggplot(inp1long, aes(value)) + facet_wrap(~variable, scales = 'free_x') +
+  geom_histogram()
+```
+
+From the plots we see that `GrLivArea` and `SalePrice` are approximately normal (with some skew and of course no negative values), and `LotArea` has some very frequent values, and also a few very extreme outliers.
+So we will use `GrLivArea` as the independent variable (X), and `SalePrice` as the dependent variable(Y) in the subsequent analysis.
+  
+```{r}
+dataset = inp1 %>% select(X = GrLivArea, Y = SalePrice)
+kable(head(dataset))
+```
+
+  
+# 3. Solution
+## 3.1 Probability calculation and independence test 
+    
+Assignment: *Calculate as a minimum the below probabilities a through c.  Assume the small letter "x" is estimated as the 4th quartile of the X variable, and the small letter "y" is estimated as the 2d quartile of the Y variable.*  
+*Interpret the meaning of all probabilities.*  
+  
+a. P(X > x | Y > y)	 	
+b. P(X > x, Y > y)	 	
+c. P(X < x | Y > y)  		
+
+*Does splitting the training data in this fashion make them independent? In other words, does P(X|Y)=P(X)P(Y))? Check mathematically, and then evaluate by running a Chi Square test for association. *
+
+For the purporses of this assignment, we shall interpret 4th quartile and 2nd quartile as the **lower quartile bounds**: 2nd quartile = 25th percentile, 4th quartile = 47th percentile.
+
+Then we split the variables according to the specification and calculate the probabilities by counting the number of rows in each group:
+
+```{r}
+dataset = dataset %>% 
+  mutate(X_over_P75 = X > quantile(X,0.75),
+         Y_over_P25 = Y > quantile(Y, 0.25))
+
+table(select(dataset,X_over_P75, Y_over_P25))
+
+print (paste("Total number of rows:",nrow(dataset)))
+```
+
+From the contingency table above we can calculate:
+  
+a. P(X > x | Y > y) - this can be interpreted as the probability of observing high values of X (in the top 25%) in the subset of the top 75% of the values of Y.
+  
+P(X > x | Y > y)= P (X > x , Y > y) / P (Y > y) = (351/1460)/ 0.75 = `r (351/1460)/ 0.75`
+  
+So for the values of Y (house selling price) that are not low, in 32% of cases the values of X (living area of the house) will be high. 
+
+b. P(X > x , Y > y) - this can be interpreted as the probability of observing high values of X (in the top 25%) and the values of Y in the top 75%:
+P (X > x , Y > y) = 351/1460 = `r (351/1460)`
+  
+So 24% of all houses that were sold at a higher price also had not the smallest living area.
+  
+c. P(X < x | Y > y) = 1 - P(X > x | Y > y) = 1 - 0.3205479 = `r 1 - 0.3205479`
+
+This is a complement probability to (a) and can be interpreted as follows: For the houses with not the lowest living area, the probability of selling at a high price is 68%.
+  
+Now we check if splitting the data in such a way make it independent, i.e. P(X|Y)=P(X) 
+or P(X,Y) = P(X)P(Y).
+  
+P(X > x | Y > y) = 0.32, but P(X > x) = 0.25, so the condition is not fullfilled  
+P (X > x , Y > y) = 0.24, but P(X > x)P(Y > y) = 0.25 * 0.75 = 0.1875, so the condition is not fullfilled
+
+Thus, splitting the data is such a way does not make them independent.
+
+Now we can test the independence of the distributions with a Chi Square test [3]:
+
+```{r}
+chisq.test(as.numeric(dataset$X_over_P75),as.numeric(dataset$Y_over_P25))
+```
+
+As the p-value of the test statistic is very small, we reject H~0~ that the distribution of the values between the groups is independent in favor of H~A~ that the distribution of the observations in the groups of Y is dependent on the distribution of the groups in X (or vice versa).
+  
+## 3.2. Descriptive and Inferential Statistics. 
+  
+Assignment: *Provide univariate descriptive statistics and appropriate plots for both variables. Provide a scatterplot of X and Y.  Transform both variables simultaneously using Box-Cox transformations. Using the transformed variables, run a correlation analysis and interpret.*  *Test the hypothesis that the correlation between these variables is 0 and provide a 99% confidence interval. Discuss the meaning of your analysis.*
+
+**Univariate descriptive statistics for X (`GrLivArea`)**
+  
+First we introduce functions to provide summary statistics, histogram and Q-Q plot of a continuous variable
+```{r}
+
+desc_stat = function(tbl, var_name) {
+
+  df = as.data.frame(tbl[[var_name]])
+  names(df)=var_name
+  print (summary(df[,var_name]))
+  meanval = mean(df[,var_name])
+  std = sd(df[,var_name])
+  
+  print (paste("Standard deviation:",std),quote = F)
+  ggplot(df, aes(df[,var_name])) + 
+    geom_histogram(bins = 30,inherit.aes = T) + 
+    geom_vline(aes(xintercept=meanval),color="blue") +
+    geom_vline(aes(xintercept=meanval-2*std),color="blue",linetype=2) +
+    geom_vline(aes(xintercept=meanval+2*std),color="blue",linetype=2) +
+    ggtitle(paste("Histogram, mean +/- 2SD of the variable",var_name))+
+    labs(x = paste("Value of",var_name))
+  
+}
+
+single_qqplot = function(tbl, var_name) {
+  
+  qqnorm(tbl[[var_name]])
+  qqline(tbl[[var_name]])
+}
+
+```
+  
+
+```{r}
+dataset = select(dataset, X,Y)
+desc_stat(dataset, 'X')
+
+single_qqplot(dataset, 'X')
+
+```
+
+We can see from the summary statistics and the histogram that the variable X is only positive, unimodal, and distributed around the mean of 1516 with a right skew and a few extreme outliers above 4000. Most of the values lie within 2 standard deviations of the mean (range: [`r c(round(mean(dataset$X)-2*sd(dataset$X)),round(mean(dataset$X)+2*sd(dataset$X)))`]). The Q-Q plot shows a significant deviation from the normal distribution. 
+
+Interpretation: on average, the above-ground living area of a house in the dataset is around 1516 sq.feet, with a few exceptions between 364 and 465 sq.feet or above 2567 sq.feet.
+
+**Univariate descriptive statistics for Y (`SalePrice`)**
+
+Repeating the approach for Y we get:
+
+```{r}
+desc_stat(dataset, 'Y')
+single_qqplot(dataset, 'Y')
+```
+  
+From the summary statistics and the histogram, we can see a very wide range of values between the minimum and maximum price. The variable also takes only positive values (as expected). The distribution is unimodal and centered at the mean of 180900, with a stronger right skew. Most of the values lie within 2 standard deviations of the mean (range: [`r c(round((mean(dataset$Y)-2*sd(dataset$Y))/1000),round((mean(dataset$Y)+2*sd(dataset$Y))/1000))` ]thousand dollars). The Q-Q plot shows a significant deviation from the normal distribution in the right tail.
+  
+Interpretation: on average, the selling price of a house in the dataset is around 181k USD, with 50% of the values between 130k and 214k.
+  
+**X-Y Scatterplot and Box-Cox transformation**
+  
+Now we'll inspect the relationship between X and Y.
+
+Here is the scatterplot:
+
+```{r}
+qplot(data =dataset, x = X, y=Y,main = "Scatterplot of X and Y")
+```
+  
+We can see a mostly linear relationship with a couple of outliers with a very high living area (X) and unusually low sale price (Y).
+
+We will now apply Box-Cox transformations to each of the variables using the optimal lambda parameter to make each of the transformed distributions closer to a normal distribution.
+
+First we identify the optimum $\lambda$ parameters for the Box-Cox transformation that maximize the correlation between the transformed values of the variable and the normal distribution quantiles[4,5]. Then we apply the Box-Cox transformation on each of the variables using their optimal lambda values. The functions from the library `forecast` can be used for this:
+
+```{r}
+library(forecast)
+
+lambda_x = BoxCox.lambda(dataset$X,method = 'loglik',-2,2)
+lambda_y = BoxCox.lambda(dataset$Y,method = 'loglik',-2,2)
+
+dataset$tr_X = BoxCox(dataset$X,lambda_x)
+dataset$tr_Y = BoxCox(dataset$Y,lambda_y)
+
+```
+
+Now we inspect the transformed variables of X and Y.
+
+```{r}
+qplot(x = tr_X, data = dataset,main = "Histogram of the Box-Cox transformed X variable")
+qplot(x = tr_Y, data = dataset,main = "Histogram of the Box-Cox transformed Y variable")
+
+```
+  
+Both distributions now show significantly less skew.
+  
+An updated scatterplot for the transformed variables still shows a positive linear relationship with a few outliers:
+```{r}
+qplot(data =dataset, x = tr_X, y=tr_Y,main = "Scatterplot of transformed X and Y")
+
+```
+
+  
+**Correlation Analysis**
+  
+We can now proceed to the correlation analysis on the transformed variables.
+  
+Running a correlation test on the transformed X and Y variables we get the following results:
+
+```{r}
+cor.test(dataset$tr_X,dataset$tr_Y,conf.level = 0.99)
+```
+
+Interpretation: due to the very low p-value (p.v.<<0.01) of the test statistic we reject H~0~ that there is no correlation between `tr_X` and `tr_Y`(the transformed X and Y variables) in favor of the H~A~ that there is a correlation between the variables at the 99% confidence level.
+
+The 99% confidence interval for the correlation between `tr_X` and `tr_Y` is: [0.696; 0.759].
+So there is a fairly strong positive linear relationship between the variables (as shown in the scatterplot above).   
+In other words, an the higher the (transformed) size of the living area of a house, the higher is its (transformed) sales price.
+
+## Linear Algebra and Correlation
+  
+Assignment: *Invert your correlation matrix. (This is known as the precision matrix and contains variance inflation factors on the diagonal.) Multiply the correlation matrix by the precision matrix, and then multiply the precision matrix by the correlation matrix.*
+  
+First we construct the correlation matrix:
+
+```{r}
+t_dataset = dplyr::select(dataset, tr_X, tr_Y)
+cor_mat = cor(t_dataset)
+kable(cor_mat)
+```
+
+
+
+
+# Reference
+[1] https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data  
+[2] http://ggplot2.tidyverse.org/reference/geom_histogram.html  
+[3] http://www.r-tutor.com/elementary-statistics/goodness-fit/chi-squared-test-independence  
+[4] https://www.rdocumentation.org/packages/car/versions/2.1-4/topics/boxCox  
+[5] http://www.itl.nist.gov/div898/handbook/eda/section3/eda336.htm  
