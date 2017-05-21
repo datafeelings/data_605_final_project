@@ -4,7 +4,7 @@ subtitle: "by Dmitriy Vecheruk"
 date: "20 May 2017"
 output:
   html_document:
-    theme: cosmo
+    theme: yeti
     highlight: kate
     toc: true
     toc_float: true
@@ -269,7 +269,7 @@ The 99% confidence interval for the correlation between `tr_X` and `tr_Y` is: [0
 So there is a fairly strong positive linear relationship between the variables (as shown in the scatterplot above).   
 In other words, an the higher the (transformed) size of the living area of a house, the higher is its (transformed) sales price.
 
-## Linear Algebra and Correlation
+## 3.3. Linear Algebra and Correlation
   
 Assignment: *Invert your correlation matrix. (This is known as the precision matrix and contains variance inflation factors on the diagonal.) Multiply the correlation matrix by the precision matrix, and then multiply the precision matrix by the correlation matrix.*
   
@@ -278,9 +278,71 @@ First we construct the correlation matrix:
 ```{r}
 t_dataset = dplyr::select(dataset, tr_X, tr_Y)
 cor_mat = cor(t_dataset)
-kable(cor_mat)
+cor_mat
+```
+  
+Now inverting the correlation matrix we get the precition matrix:
+```{r}
+inv_cor_mat = solve(cor_mat)
+inv_cor_mat
+```
+  
+Multiplying the correlation matrix by the precision matrix we by definition get the identity matrix, as one matrix is the inverse of the other:
+```{r}
+result1 = cor_mat %*% inv_cor_mat
+round(result1)
+```
+  
+Multiplying the precision matrix by the correlation matrix we also get the identity matrix.
+
+```{r}
+result2 = inv_cor_mat  %*% cor_mat
+round(result2)
 ```
 
+## 3.4. Calculus-Based Probability & Statistics  
+  
+Assignment: *Many times, it makes sense to fit a closed form distribution to data.  For your non-transformed independent variable, location shift it so that the minimum value is above zero. Then load the MASS package and run fitdistr to fit a density function of your choice. Find the optimal value of the parameters for this distribution, and then take 1000 samples from this distribution.  Plot a histogram and compare it with a histogram of your non-transformed original variable.*   
+
+First, make sure that the minimum value is above zero in the non-transformed variable X (although this should be the case, as the living area of the house is always >0):
+
+```{r}
+max(dataset$X)>0
+```
+
+Now we can proceed to finding a fitting density function to the sample distribution so that we can generate multiple samples using the PDF. As the values in our sample are only positive, it might be reasonable to fit a Gamma distribution:
+
+```{r}
+library(MASS)
+pdf_fit = fitdistr(dataset$X,densfun = 'gamma')
+
+print (pdf_fit)
+```
+
+Using the optimum parameters, we get the new PDF that should generate observations that are similar to the original sample distribution and take 1000 samples from this distribution.
+Plotting the two histograms on top of each other (original data vs. the generated data) we should see a close match:
+
+```{r}
+# Generate the same amount of samples using the estimated PDF as in the original dataset
+new_X = rgamma(n = 1000,shape = pdf_fit$estimate[1],rate = pdf_fit$estimate[2])
+
+# Plot both the original sampling distribution and the newly generated X values (sample 1000 from the original dataset)
+
+dataset_1000 = dataset %>% sample_n(1000)
+
+ggplot(data=dataset_1000) + 
+  geom_histogram(aes(X, fill = "Original")) + 
+  geom_histogram(aes(new_X, fill="New PDF"),alpha=0.5)+
+  ggtitle("Sampling distribution of X: original dataset vs. estimated PDF")+
+  scale_fill_manual("Source of the samples", values = c("red", "blue"))
+
+```
+  
+We observe a fairly close match in the distribution of a 1000 samples from the original data vs. the estimated probability density function from the Gamma family.
+
+## 3.5 Modeling
+
+Assignment: *Build some type of regression model and submit your model to the competition board. Provide your complete model summary and results with analysis.*  
 
 
 
