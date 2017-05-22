@@ -14,9 +14,6 @@ output:
 
 ```{r knitr_init, echo=FALSE, cache=FALSE}
 library(knitr)
-library(MASS)
-library(dplyr)
-library(ggplot2)
 
 ## Global options
 options(max.print="75")
@@ -29,6 +26,7 @@ opts_chunk$set(echo=TRUE,
                warning=FALSE,
                fig.height = 4)
 opts_knit$set(width=75)
+
 ```
 
 # 1. Introduction
@@ -45,7 +43,6 @@ The goal of the assignment is to use a subset of variables from the [Kaggle Hous
   
 The details of the assignments are provided below.
 
-**DESCRIBE THE DATASET(copy paste?)**
 
 # 2. Data preparation
   
@@ -53,16 +50,21 @@ The details of the assignments are provided below.
 
 First off, we are required to read the training data and pick a quantitative variable that should be the independent variable X, whereas the dependent variable Y is `SalePrice`.
   
-```{r message=F, warning=F}
+```{r message=F, warning=F, cache=T}
+library(MASS)
 library(dplyr)
-library(readr)
+library(ggplot2)
 
-inp = read.csv("data/train.csv")
+inp = read_csv("https://raw.githubusercontent.com/datafeelings/data_605_final_project/master/data/train.csv")
+inp = data.frame(inp)
 str(inp)
 ```
   
 This training dataset at hand is a subset of rows from the full Ames Housing Dataset.  
-It contains `r nrow(inp)` rows and `r ncol(inp)` columns, many of which are categorical. After inspecting the codebook[1], the following quantitative columns were selected as potentially interesting independent variables:
+It contains `r nrow(inp)` rows and `r ncol(inp)` columns, many of which are categorical.   
+The dataset describes various properties of houses that were sold in Ames, Iowa, and their sale price.
+
+After inspecting the codebook^[1][1]^, the following quantitative columns were selected as potentially interesting independent variables:
 `LotArea` (sq.ft. size of the lot) and `GrLivArea`(sq.ft. size of the living area above ground).
 
 We'll first inspect the filling rates and distributions of each of the variables and then pick one to proceed with the assignment.
@@ -77,7 +79,7 @@ inp1 = inp %>% dplyr::select(LotArea,GrLivArea,SalePrice)
 summary(inp1)
 ```
 
-We can see that none of the variables has missing values, so we can proceed to distribution plots[2]:
+We can see that none of the variables has missing values, so we can proceed to the distribution plots^[2][2]^:
 
 ```{r}
 library(ggplot2)
@@ -147,7 +149,7 @@ P (X > x , Y > y) = 0.24, but P(X > x)P(Y > y) = 0.25 * 0.75 = 0.1875, so the co
 
 Thus, splitting the data is such a way does not make them independent.
 
-Now we can test the independence of the distributions with a Chi Square test [3]:
+Now we can test the independence of the distributions with a Chi Square test^[3][3]^:
 
 ```{r}
 chisq.test(as.numeric(dataset$X_over_P75),as.numeric(dataset$Y_over_P25))
@@ -200,7 +202,7 @@ single_qqplot(dataset, 'X')
 
 ```
 
-We can see from the summary statistics and the histogram that the variable X is only positive, unimodal, and distributed around the mean of 1516 with a right skew and a few extreme outliers above 4000. Most of the values lie within 2 standard deviations of the mean (range: [`r c(round(mean(dataset$X)-2*sd(dataset$X)),round(mean(dataset$X)+2*sd(dataset$X)))`]). The Q-Q plot shows a significant deviation from the normal distribution. 
+We can see from the summary statistics and the histogram that the variable X is only positive, unimodal, and distributed around the mean of 1515 with a right skew and a few extreme outliers above 4000. Most of the values lie within 2 standard deviations of the mean (range: [`r c(round(mean(dataset$X)-2*sd(dataset$X)),round(mean(dataset$X)+2*sd(dataset$X)))`]). The Q-Q plot shows a significant deviation from the normal distribution. 
 
 Interpretation: on average, the above-ground living area of a house in the dataset is around 1516 sq.feet, with a few exceptions between 364 and 465 sq.feet or above 2567 sq.feet.
 
@@ -231,7 +233,7 @@ We can see a mostly linear relationship with a couple of outliers with a very hi
 
 We will now apply Box-Cox transformations to each of the variables using the optimal lambda parameter to make each of the transformed distributions closer to a normal distribution.
 
-First we identify the optimum $\lambda$ parameters for the Box-Cox transformation that maximize the correlation between the transformed values of the variable and the normal distribution quantiles[4,5]. Then we apply the Box-Cox transformation on each of the variables using their optimal lambda values. The functions from the library `forecast` can be used for this:
+First we identify the optimum $\lambda$ parameters for the Box-Cox transformation^[4][4],[5][5]^ that maximize the correlation between the transformed values of the variable and the normal distribution quantiles. Then we apply the Box-Cox transformation on each of the variables using their optimal lambda values. The functions from the library `forecast` can be used for this:
 
 ```{r}
 library(forecast)
@@ -289,7 +291,7 @@ cor_mat = cor(t_dataset)
 cor_mat
 ```
   
-Now inverting the correlation matrix we get the precition matrix:
+Now inverting the correlation matrix we get the precision matrix:
 ```{r}
 inv_cor_mat = solve(cor_mat)
 inv_cor_mat
@@ -327,7 +329,7 @@ pdf_fit = fitdistr(dataset$X,densfun = 'gamma')
 print (pdf_fit)
 ```
 
-Using the optimum parameters, we get the new PDF that should generate observations that are similar to the original sample distribution and take 1000 samples from this distribution.
+Using the optimum parameters identified by the `fitdistr` function^[6][6]^, we get the new PDF that should generate observations that are similar to the original sample distribution and take 1000 samples from this distribution.
 Plotting the two histograms on top of each other (original data vs. the generated data) we should see a close match:
 
 ```{r}
@@ -352,20 +354,24 @@ We observe a fairly close match in the distribution of a 1000 samples from the o
 
 Assignment: *Build some type of regression model and submit your model to the competition board. Provide your complete model summary and results with analysis.*  
 
-As the original dataset includes a large number of predictor variables (80), overfitting is a concern when building the model with the full set of variables. On the other hand, stepwise model selection approaches would be inefficient given the large number of combinations of the possible predictors.  
-Therefore we'll apply a regularized regression approach that automatically takes care of the variable selection by setting predictor coefficients to zero if this helps to reduce the overall error (LASSO regression from the `glmnet` library) [6].   
-The optimal penalty parameter $\lambda$ will be identified using k-fold cross-validation, then the model will be trained using the defined lambda value [7].  
+As the original dataset includes a large number of predictor variables (80), overfitting is a concern when building the model with the full set of variables. On the other hand, simple best model selection approaches would be inefficient given the large number of combinations of the possible predictors.  
+Therefore we'll apply a regularized regression approach that automatically takes care of the variable selection by setting predictor coefficients to zero if this helps to reduce the overall error (elastic net regression from the `caret` library)^[7][7][8][8]^.   
+The optimal regression hyperparameters $\lambda$ (penalty parameter) and $\alpha$ (the elasticnet mixing parameter) will be identified using k-fold cross-validation, then the model will be trained using the defined best lambda and alpha values.  
 
 ### 3.5.1 Data preprocessing
 
-First, we need to preprocess the data: remove near-zero variance predictors and generate numeric dummy variables for factor variables [].
-
-```{r read data}
+First, we need to preprocess the data: remove near-zero variance predictors and generate numeric dummy variables for factor variables^[8][8]^.
+  
+Reading the dataset and splitting into training and test:
+```{r read data, cache=T}
 # Read both datasets into one dataframe to get the full set of factor levels.
 # Otherwise GLM methods relying on matrices with dummy variables for each factor level will crash
 
-train = read.csv("data/train.csv",stringsAsFactors = F)
-test = read.csv("data/test.csv",stringsAsFactors = F)
+train = read_csv("https://raw.githubusercontent.com/datafeelings/data_605_final_project/master/data/train.csv")
+test = read_csv("https://raw.githubusercontent.com/datafeelings/data_605_final_project/master/data/test.csv")
+
+train = data.frame(train)
+test = data.frame(test)
 
 test$SalePrice = 0 # compensate for the missing response
 
@@ -388,18 +394,15 @@ inp_df = full[full$subset=="train",1:(ncol(full)-1)]
 test = full[full$subset=="test",1:(ncol(full)-1)]
 ```
 
-
+We preprocess the dataset removing the variables with near-zero variance that can lead to high-leverage observations and then convert the training dataframe of into a design matrix with dummy variables for each factor level.
 
 ```{r caret train preproc}
 library(caret)
-
-#inp_df = read.csv("data/train.csv")
 
 # Upon inspection of the codebook, we make 2 changes:
 #   the MSSubClass should be dropped as it confuses the prediction
 #   the Id column should be excluded
 
-#inp_df$MSSubClass = as.factor(inp_df$MSSubClass)
 inp_df = inp_df[,3:ncol(inp_df)]  
 
 
@@ -422,27 +425,30 @@ input_vars[is.na(input_vars)] = 0
 
 ```
 
-```{r caret lasso-fit}
+### 3.5.2 Data Modeling & Diagnostics
+
+Now we fit an elastic net regression using 10-fold cross-validation repeated 5 times.
+During the repeated CV-fitting process, the `caret::train` function^[8][8]^ will identify a set of optimum regression hyperparameters (alpha and lambda).
+
+```{r caret lasso-fit, cache=TRUE}
 set.seed(123)
 
 fitControl <- trainControl(## 10-fold CV
-                           method = "repeatedcv",
+                           method = "adaptive_cv",
                            number = 10,
                            ## repeated ten times
                            repeats = 5)
 
-# Grid for parameter tuning
-# Fixed alpha at 1 to keep the pure LASSO approach
-#tune_grid = expand.grid(.alpha = 1, .lambda = (1:10) * 0.1)
 
 lasso_fit = train(x=input_vars,y=inp_df$SalePrice, 
-                 method = "glmnet",
-                 trControl = fitControl)
+                  method = "glmnet",
+                  trControl = fitControl)
 lasso_fit
 
 ```
   
-We can see that the best model explains approximately 84.2% of the variance in the response and has an RMSE of 31869.57
+We can see that the best model explains approximately 84% of the variance in the response and has an RMSE of approximately 32 thousand dollars.
+
 Now we can use the final model to compare its output with the in-sample data first:
 
 ```{r}
@@ -455,7 +461,36 @@ qplot(x=fitted, y = inp_df$SalePrice,xlab = "Fitted data", ylab = "True Response
       main = "Predicted Sale Price vs. True Response")
 ```
   
+The plot looks fairly good with an exception of a few outliers not captured by the model.
+We also see an impact of a few extreme outliers on the residual plots^[9][9]^ below:
 
+```{r fig.height=6}
+library(plotmo)
+
+plotres(lasso_model,which = 3:4)
+
+```
+  
+While model residuals look fine for the most part, heteroscedasticity is visible, and the normal quantile plot shows the same outliers corrupting the residual distribtion.  
+
+In the future iterations, a clear avenue of model improvement would be outlier analysis in the training data and feature engineering to deal with such cases appropriately (e.g. the abovementioned analysis of the `GrLivArea` variable and its Box-Cox transformation already provides some possibilities).  
+
+### 3.5.3 Model interpretation 
+
+Inspecting the variable importance of the model^[8][8]^ we identify the top factors influencing the price:
+
+```{r}
+var_imp = varImp(lasso_model, scale = FALSE)
+var_imp = tbl_df(var_imp)
+var_imp$variable = row.names(var_imp)
+var_imp = var_imp %>% arrange(-Overall)
+var_imp[1:10,]
+```
+
+We can see that among the top-10 parameters by the strength of their influence are the excellent levels of pool, kitchen, basement, and exterior material quality, as well as certain neighborhoods.  
+The model is easily interpretable using common sense.  
+   
+### 3.5.4 Kaggle Submission
   
 Now we can apply the model to generate predictions from the test data in order to submit them to the Kaggle competition.
 
@@ -463,133 +498,53 @@ Now we can apply the model to generate predictions from the test data in order t
 
 # Apply the same transformations as on the training set
 
-test = test[,3:ncol(test)]
-test = test[,nonzv_params] # retain only the selected non-NZV columns
+test_df = test[,3:ncol(test)]
+test_df = test_df[,nonzv_params] # retain only the selected non-NZV columns
 
 # Generate a feature matrix with dummy variables and 
 # replace NA values in the feature matrix with zeros
-dummies_test = dummyVars(SalePrice ~ ., data = test)
-input_vars_test = predict(dummies_test,test)
+dummies_test = dummyVars(SalePrice ~ ., data = test_df)
+input_vars_test = predict(dummies_test,test_df)
 input_vars_test[is.na(input_vars_test)] = 0
 
 # Predict for the test data
 
-test_pred = predict(lasso_model,s = 1,newx = input_vars_test,type="link")
+test_pred = predict(lasso_model,s = lasso_model$lambdaOpt, newx = input_vars_test,type="link")
 ```
 
 Save the predicted dataset in the format required by Kaggle:
 ```{r}
-plot(test_pred,fitted[1:1459])
+test_pred = data.frame(test_pred)
+names(test_pred) = "SalePrice"
+test_pred$Id = test$Id
+test_pred = test_pred[,c("Id","SalePrice")]
+
+write.csv(test_pred, "test_pred.csv", row.names = F)
 ```
 
-
-```{r cv glm train fit}
-
-set.seed(123)
-
-# Upon inspection of the codebook, we make 2 changes:
-#   the MSSubClass should be encoded as a factor
-#   the Id column should be excluded
-
-#inp_df$MSSubClass = NULL
-#inp_df$MSSubClass = as.factor(inp_df$MSSubClass)
-inp_df = inp_df[,2:ncol(inp_df)]
+The Kaggle score of this submission is **0.13567**
 
 
-# We should exclude the variables having very low variance that might lead to observations with an extreme leverage in individual folds
-
-nzv <- caret::nearZeroVar(inp_df, saveMetrics= TRUE)
-
-nonzv_params = nzv[nzv$nzv==FALSE,]
-nonzv_params = row.names(nonzv_params)
-
-#cols = match(nonzv_params ,colnames(inp_df)) 
-inp_no_nzv = inp_df[,nonzv_params]
-
-
-x1 = as.matrix(inp_no_nzv[,-59])
-x1[is.na(x1)] = 0 # replace NA values with zero
-x1 = data.frame(x1)
-x1 = model.matrix( ~ . -1, x1) # generate dummy variables for factor levels
-
-y1 = inp_no_nzv[,59]
-
-cv_lasso = cv.glmnet(x = x1,y = y1,family = "gaussian",alpha = 1,nlambda = 100)
-
-```
-
-Here we can see how the lambda correspondent to the lowest cross-validation mean squared error was selected by the model:
-```{r glmnet }
-plot(cv_lasso)
-```
-
-We will use the most regularized model (with the least amount of predictors) that is still within 1 SE of the lowest lambda value. We can then see what % of the deviance of the response is explaned by this model:
-
-```{r max dev ratio}
-lambda.1se = cv_lasso$lambda.1se
-models = data.frame(dev_ratio =cv_lasso$glmnet.fit$dev.ratio,
-                    lambda = cv_lasso$glmnet.fit$lambda)
-
-max_dev_rat = models[models$lambda == lambda.1se,1]
-print (max_dev_rat)
-```
-
-The best and simplest model explains `r round(max_dev_rat*100,2)`% of the variance of the response variable.
-We can also visualize this good match against the training data:
-
-```{r glmnet}
-# The most regularized model within 1 SE of the minimum lambda
-fitted = predict(cv_lasso,newx = x1,s = "lambda.1se")
-qplot(x=fitted, y = inp_df$SalePrice,xlab = "Fitted data", ylab = "True Response",
-      main = "Predicted Sale Price vs. True Response")
-
-```
-
-Now we can briefly explore the most important predictors
-
-```{r glmnet}
-summary(cv_lasso$glmnet.fit)
-```
-
-Finally, generate predictions on the test dataset for submission to the Kaggle competition
-
-```{r glmnet test}
-
-
-# Apply the same transformations on the test set as we did on the training set
-
-#test$MSSubClass = NULL
-test = test[,2:ncol(test)]
-
-test = test[,nonzv_params] # retain only the selected columns
-
-
-
-x2 = as.matrix(test[,-59])
-x2[is.na(x2)] = 0 # replace NA values with zero
-x2 = data.frame(x2)
-x2 = model.matrix( ~ . -1, x2) # generate dummy variables for factor levels
-
-fitted_test = predict(cv_lasso,newx = x2,s = "lambda.1se")
-
-
-```
-
-
-```{r}
-
-```
 
 
 # Reference
-[1] https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data  
-[2] http://ggplot2.tidyverse.org/reference/geom_histogram.html  
-[3] http://www.r-tutor.com/elementary-statistics/goodness-fit/chi-squared-test-independence  
-[4] https://www.rdocumentation.org/packages/car/versions/2.1-4/topics/boxCox  
-[5] http://www.itl.nist.gov/div898/handbook/eda/section3/eda336.htm  
-[6] http://www-bcf.usc.edu/~gareth/ISL/
-[7] https://www.youtube.com/watch?v=fAPCaue8UKQ  
-[8] https://stats.stackexchange.com/questions/72251/an-example-lasso-regression-using-glmnet-for-binary-outcome 
-[] http://topepo.github.io/caret/pre-processing.html#dummy  
-[] https://topepo.github.io/caret/variable-importance.html#model-independent-metrics
-[] http://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html#qs
+
+[1]: https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data  "Kaggle Dataset Description"
+[2]: http://ggplot2.tidyverse.org/reference/geom_histogram.html "ggplot2 Reference" 
+[3]: http://www.r-tutor.com/elementary-statistics/goodness-fit/chi-squared-test-independence "R-Tutor: Chi Squared Test" 
+[4]: https://www.rdocumentation.org/packages/car/versions/2.1-4/topics/boxCox "R Documentation: car package"  
+[5]: http://www.itl.nist.gov/div898/handbook/eda/section3/eda336.htm "Engineering Statistics Handbook: Box-Cox Normality Plot"    
+[6]: https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/fitdistr.html "R Documentation: Maximum-likelihood Fitting of Univariate Distributions"
+[7]: http://www-bcf.usc.edu/~gareth/ISL/ "Gareth James, Daniela Witten, Trevor Hastie and Robert Tibshirani: An Introduction to Statistical Learning with Applications in R"
+[8]: http://topepo.github.io/caret/ "Max Kuhn: The caret Package"
+[9]: http://www.milbo.org/doc/plotres-notes.pdf "Stephen Milborrow: Plotting model residuals with plotres"
+
+1.[Kaggle Dataset Description](https://www.kaggle.com/c/house-prices-advanced-regression-techniques/data)    
+2. [ggplot2 Reference](http://ggplot2.tidyverse.org/reference/geom_histogram.html)  
+3. [R-Tutor: Chi Squared Test](http://www.r-tutor.com/elementary-statistics/goodness-fit/chi-squared-test-independence)  
+4. [R Documentation: Box-Cox Transformations For Linear Models](https://www.rdocumentation.org/packages/car/versions/2.1-4/topics/boxCox)  
+5. [Engineering Statistics Handbook: Box-Cox Normality Plot](http://www.itl.nist.gov/div898/handbook/eda/section3/eda336.htm)     
+6. [R Documentation: Maximum-likelihood Fitting of Univariate Distributions](https://stat.ethz.ch/R-manual/R-devel/library/MASS/html/fitdistr.html)  
+7. [Gareth James, Daniela Witten, Trevor Hastie and Robert Tibshirani: An Introduction to Statistical Learning with Applications in R](http://www-bcf.usc.edu/~gareth/ISL/)  
+8. [Max Kuhn: The caret Package](http://topepo.github.io/caret/)  
+9. [Stephen Milborrow: Plotting model residuals with plotres](http://www.milbo.org/doc/plotres-notes.pdf)  

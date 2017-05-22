@@ -6,3 +6,11 @@ ggplot2
 rmdformats
 forecast
 MASS
+lattice
+caret
+Matrix
+foreach
+glmnet
+plotrix
+TeachingDemos
+plotmo
