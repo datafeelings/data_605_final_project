@@ -360,17 +360,47 @@ The optimal penalty parameter $\lambda$ will be identified using k-fold cross-va
 
 First, we need to preprocess the data: remove near-zero variance predictors and generate numeric dummy variables for factor variables [].
 
-```{r train preproc}
+```{r read data}
+# Read both datasets into one dataframe to get the full set of factor levels.
+# Otherwise GLM methods relying on matrices with dummy variables for each factor level will crash
+
+train = read.csv("data/train.csv",stringsAsFactors = F)
+test = read.csv("data/test.csv",stringsAsFactors = F)
+
+test$SalePrice = 0 # compensate for the missing response
+
+# Add definition
+train$subset = "train"
+test$subset = "test"
+
+full = rbind(train,test)
+
+# Convert all characters to factors
+for(i in 1:ncol(full)) {
+  if(is.character(full[,i])) {
+    full[,i] = as.factor(full[,i])
+    }
+}
+
+# Now we can split the datasets back and proceed separate processing
+
+inp_df = full[full$subset=="train",1:(ncol(full)-1)]
+test = full[full$subset=="test",1:(ncol(full)-1)]
+```
+
+
+
+```{r caret train preproc}
 library(caret)
 
-inp_df = read.csv("data/train.csv")
+#inp_df = read.csv("data/train.csv")
 
 # Upon inspection of the codebook, we make 2 changes:
-#   the MSSubClass should be encoded as a factor
+#   the MSSubClass should be dropped as it confuses the prediction
 #   the Id column should be excluded
 
-inp_df$MSSubClass = as.factor(inp_df$MSSubClass)
-inp_df = inp_df[,2:ncol(inp_df)]
+#inp_df$MSSubClass = as.factor(inp_df$MSSubClass)
+inp_df = inp_df[,3:ncol(inp_df)]  
 
 
 # We should exclude the variables having very low variance that might lead to observations with an extreme leverage in individual folds
@@ -380,8 +410,7 @@ nzv <- nearZeroVar(inp_df, saveMetrics= TRUE)
 nonzv_params = nzv[nzv$nzv==FALSE,]
 nonzv_params = row.names(nonzv_params)
 
-cols = match(nonzv_params ,colnames(inp_df)) 
-inp_no_nzv = inp_df[,cols]
+inp_no_nzv = inp_df[,nonzv_params]
 
 
 # Generate a feature matrix with dummy variables and 
@@ -393,7 +422,7 @@ input_vars[is.na(input_vars)] = 0
 
 ```
 
-```{r lasso-fit}
+```{r caret lasso-fit}
 set.seed(123)
 
 fitControl <- trainControl(## 10-fold CV
@@ -404,17 +433,16 @@ fitControl <- trainControl(## 10-fold CV
 
 # Grid for parameter tuning
 # Fixed alpha at 1 to keep the pure LASSO approach
-tune_grid = expand.grid(.alpha = 1, .lambda = (1:10) * 0.1)
+#tune_grid = expand.grid(.alpha = 1, .lambda = (1:10) * 0.1)
 
 lasso_fit = train(x=input_vars,y=inp_df$SalePrice, 
                  method = "glmnet",
-                 tuneGrid = tune_grid,
                  trControl = fitControl)
 lasso_fit
 
 ```
   
-We can see that the best model explains approximately 81.6% of the variance in the response and has an RMSE of 34927.44
+We can see that the best model explains approximately 84.2% of the variance in the response and has an RMSE of 31869.57
 Now we can use the final model to compare its output with the in-sample data first:
 
 ```{r}
@@ -424,37 +452,19 @@ lasso_model = lasso_fit$finalModel
 fitted = predict(lasso_fit)
 
 qplot(x=fitted, y = inp_df$SalePrice,xlab = "Fitted data", ylab = "True Response",
-      main = "In-Sample comparison: Predicted Sale Price vs. True Response",alpha=0.5)
+      main = "Predicted Sale Price vs. True Response")
 ```
   
-Here are the top 10 predictors defined by the variable importance []:
-```{r}
-var_imp = varImp(lasso_model)
-var_imp$parameter = row.names(var_imp)
-var_imp = var_imp[order(var_imp$Overall,decreasing = T),] 
 
-var_imp_top10 = var_imp[1:10,]
-print(var_imp_top10)
-```
-
-Neighborhood seems to be the top influencing factor along with a good/excellent swimming pool, excellent kitchen, and all-stone exterior.
   
 Now we can apply the model to generate predictions from the test data in order to submit them to the Kaggle competition.
 
-```{r}
-test = read.csv("data/test.csv")
-
-# Add placeholder response column to maintain the structure
-
-test$SalePrice = 0
+```{r caret test set}
 
 # Apply the same transformations as on the training set
 
-test$MSSubClass = as.factor(test$MSSubClass)
-test = test[,2:ncol(test)]
-
-test = test[,cols] # retain only the selected columns
-
+test = test[,3:ncol(test)]
+test = test[,nonzv_params] # retain only the selected non-NZV columns
 
 # Generate a feature matrix with dummy variables and 
 # replace NA values in the feature matrix with zeros
@@ -462,17 +472,40 @@ dummies_test = dummyVars(SalePrice ~ ., data = test)
 input_vars_test = predict(dummies_test,test)
 input_vars_test[is.na(input_vars_test)] = 0
 
-# If some factor levels do not appear in the test set, the prediction will fail
-# Add these levels:
-
-setdiff(names(input_vars_test[1,]),names(input_vars[1,]))
-
 # Predict for the test data
 
 test_pred = predict(lasso_model,s = 1,newx = input_vars_test,type="link")
 ```
 
+Save the predicted dataset in the format required by Kaggle:
 ```{r}
+plot(test_pred,fitted[1:1459])
+```
+
+
+```{r cv glm train fit}
+
+set.seed(123)
+
+# Upon inspection of the codebook, we make 2 changes:
+#   the MSSubClass should be encoded as a factor
+#   the Id column should be excluded
+
+#inp_df$MSSubClass = NULL
+#inp_df$MSSubClass = as.factor(inp_df$MSSubClass)
+inp_df = inp_df[,2:ncol(inp_df)]
+
+
+# We should exclude the variables having very low variance that might lead to observations with an extreme leverage in individual folds
+
+nzv <- caret::nearZeroVar(inp_df, saveMetrics= TRUE)
+
+nonzv_params = nzv[nzv$nzv==FALSE,]
+nonzv_params = row.names(nonzv_params)
+
+#cols = match(nonzv_params ,colnames(inp_df)) 
+inp_no_nzv = inp_df[,nonzv_params]
+
 
 x1 = as.matrix(inp_no_nzv[,-59])
 x1[is.na(x1)] = 0 # replace NA values with zero
@@ -482,30 +515,29 @@ x1 = model.matrix( ~ . -1, x1) # generate dummy variables for factor levels
 y1 = inp_no_nzv[,59]
 
 cv_lasso = cv.glmnet(x = x1,y = y1,family = "gaussian",alpha = 1,nlambda = 100)
-plot(fitted, y1)
-print(lm1)
 
 ```
 
 Here we can see how the lambda correspondent to the lowest cross-validation mean squared error was selected by the model:
-```{r}
+```{r glmnet }
 plot(cv_lasso)
 ```
 
 We will use the most regularized model (with the least amount of predictors) that is still within 1 SE of the lowest lambda value. We can then see what % of the deviance of the response is explaned by this model:
 
-```{r}
+```{r max dev ratio}
 lambda.1se = cv_lasso$lambda.1se
 models = data.frame(dev_ratio =cv_lasso$glmnet.fit$dev.ratio,
                     lambda = cv_lasso$glmnet.fit$lambda)
 
-models[models$lambda == lambda.1se,]
+max_dev_rat = models[models$lambda == lambda.1se,1]
+print (max_dev_rat)
 ```
 
-The best and simplest model explains 88% of the variance of the response variable.
+The best and simplest model explains `r round(max_dev_rat*100,2)`% of the variance of the response variable.
 We can also visualize this good match against the training data:
 
-```{r}
+```{r glmnet}
 # The most regularized model within 1 SE of the minimum lambda
 fitted = predict(cv_lasso,newx = x1,s = "lambda.1se")
 qplot(x=fitted, y = inp_df$SalePrice,xlab = "Fitted data", ylab = "True Response",
@@ -515,38 +547,22 @@ qplot(x=fitted, y = inp_df$SalePrice,xlab = "Fitted data", ylab = "True Response
 
 Now we can briefly explore the most important predictors
 
-```{r}
+```{r glmnet}
 summary(cv_lasso$glmnet.fit)
 ```
 
 Finally, generate predictions on the test dataset for submission to the Kaggle competition
 
-```{r}
-test = read.csv("data/test.csv")
+```{r glmnet test}
 
-# Add placeholder response column to maintain the structure
 
-test$SalePrice = 0
+# Apply the same transformations on the test set as we did on the training set
 
-# Apply the same transformations as on the training set
-
-test$MSSubClass = as.factor(test$MSSubClass)
+#test$MSSubClass = NULL
 test = test[,2:ncol(test)]
 
-test = test[,cols] # retain only the selected columns
-test = test[,-59]
+test = test[,nonzv_params] # retain only the selected columns
 
-# It is crucial to set the factor levels to the same levels as in the training data
-# otherwise the glmnet prediction will fail due to a different dimension of the dummy
-# variable matrix
-
-train = inp_no_nzv[,-59]
-
-for(i in 1:ncol(test)) {
-  if(is.factor(test[,i])) {
-    levels(test[,i]) <- c(levels(train[,i]))
-    }
-}
 
 
 x2 = as.matrix(test[,-59])
@@ -555,6 +571,13 @@ x2 = data.frame(x2)
 x2 = model.matrix( ~ . -1, x2) # generate dummy variables for factor levels
 
 fitted_test = predict(cv_lasso,newx = x2,s = "lambda.1se")
+
+
+```
+
+
+```{r}
+
 ```
 
 
